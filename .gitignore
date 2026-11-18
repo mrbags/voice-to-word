@@ -1,0 +1,19 @@
+# Python environments created by run.bat / build_exe.bat
+.venv/
+.build-venv/
+
+# Downloaded Whisper speech models (large; re-downloaded automatically)
+models/
+
+# PyInstaller build output
+build/
+dist/
+*.spec
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Transcripts produced while testing
+*.docx
+~$*

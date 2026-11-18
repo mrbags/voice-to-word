@@ -1,0 +1,18 @@
+# Python packages the app needs. Install with:  pip install -r requirements.txt
+
+# Whisper speech recognition, optimised to run fast on an ordinary CPU.
+faster-whisper>=1.1.0,<2
+
+# Creates the Word (.docx) transcript.
+python-docx>=1.1.0
+
+# Fast maths on audio samples (volume detection, resampling).
+numpy>=1.24
+
+# Audio/video file decoding used by faster-whisper. Capped below 16 because
+# PyAV 16 removed an option that faster-whisper 1.x still passes.
+av>=14,<16
+
+# Windows-only: records what the speakers are playing ("loopback") and from
+# microphones. Skipped automatically on other operating systems.
+PyAudioWPatch>=0.2.12; sys_platform == "win32"
