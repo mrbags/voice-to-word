@@ -17,3 +17,6 @@ __pycache__/
 # Transcripts produced while testing
 *.docx
 ~$*
+
+# Saved "Words to expect" list
+words.txt

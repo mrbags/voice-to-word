@@ -25,6 +25,10 @@ window and appended to the Word document, which is saved after every
 utterance so nothing is lost if the app or PC stops unexpectedly. Audio files
 skip the Segmenter: Whisper reads the whole file and returns its sentences.
 
+Whisper spells unfamiliar names the way they sound ("Kehind Wiley"). The
+optional "Words to expect" box lets the user list names and terms in advance;
+they are passed to Whisper as hints so it spells them correctly.
+
 Author: Danny M. Byers, Native Thought (https://www.nativethought.com)
 License: MIT (see the LICENSE file)
 
@@ -103,6 +107,10 @@ MODEL_NOTES = {
 # If the voice is silent for longer than this many seconds, the next words
 # start a new paragraph in the Word document.
 PARAGRAPH_GAP_S = 2.0
+
+# The "Words to expect" list is remembered between runs in this small text
+# file, stored beside the app (see app_dir()).
+WORDS_FILE_NAME = "words.txt"
 
 
 # --------------------------------------------------------------------------- #
@@ -547,7 +555,7 @@ class App:
         """root - the main Tk window."""
         self.root = root
         root.title(APP_NAME)
-        root.geometry("760x620")
+        root.geometry("760x660")
         root.minsize(640, 500)
 
         # Messages from background threads to the GUI thread (see post()).
@@ -565,6 +573,11 @@ class App:
         self.last_path = None                # last saved document, for "Open document"
         self.devices = []                    # devices shown in the drop-down
         self.user_chose_path = False         # did the user pick the save path by hand?
+        self.words_path = os.path.join(app_dir(), WORDS_FILE_NAME)
+        # Settings copied when Start is pressed, for the worker threads (see _start).
+        self.session_model = None
+        self.session_timestamps = False
+        self.session_hotwords = None
 
         self._build_ui()
         self._on_source_change()            # show the right controls for the default source
@@ -627,14 +640,21 @@ class App:
         ttk.Entry(frm, textvariable=self.out_var).grid(row=3, column=1, sticky="ew", **pad)
         ttk.Button(frm, text="Choose…", command=self._choose_output).grid(row=3, column=2, sticky="ew", **pad)
 
-        # Row 4: timestamps option
+        # Row 4: "Words to expect:" - names and terms to help Whisper spell
+        # correctly, separated by commas. Pre-filled with last time's list.
+        ttk.Label(frm, text="Words to expect:").grid(row=4, column=0, sticky="w", **pad)
+        self.words_var = tk.StringVar(value=self._load_words())
+        ttk.Entry(frm, textvariable=self.words_var).grid(row=4, column=1, sticky="ew", **pad)
+        ttk.Label(frm, text="names, terms…", foreground="gray").grid(row=4, column=2, sticky="w", **pad)
+
+        # Row 5: timestamps option
         self.ts_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(frm, text="Add timestamps to each paragraph",
-                        variable=self.ts_var).grid(row=4, column=1, sticky="w", **pad)
+                        variable=self.ts_var).grid(row=5, column=1, sticky="w", **pad)
 
-        # Row 5: Start / Stop / Open document
+        # Row 6: Start / Stop / Open document
         btns = ttk.Frame(frm)
-        btns.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(8, 4))
+        btns.grid(row=6, column=0, columnspan=3, sticky="ew", pady=(8, 4))
         self.start_btn = ttk.Button(btns, text="▶  Start listening", command=self._start)
         self.start_btn.pack(side="left", padx=8)
         self.stop_btn = ttk.Button(btns, text="■  Stop", command=self._stop, state="disabled")
@@ -642,19 +662,59 @@ class App:
         self.open_btn = ttk.Button(btns, text="Open document", command=self._open_doc, state="disabled")
         self.open_btn.pack(side="right", padx=8)
 
-        # Row 6: live transcript (read-only; we unlock it briefly to add text)
+        # Row 7: live transcript (read-only; we unlock it briefly to add text)
         self.text = scrolledtext.ScrolledText(frm, wrap="word", height=16, font=("Segoe UI", 10))
-        self.text.grid(row=6, column=0, columnspan=3, sticky="nsew", padx=8, pady=(6, 4))
+        self.text.grid(row=7, column=0, columnspan=3, sticky="nsew", padx=8, pady=(6, 4))
         self.text.configure(state="disabled")
-        frm.rowconfigure(6, weight=1)   # the transcript box grows with the window
+        frm.rowconfigure(7, weight=1)   # the transcript box grows with the window
 
-        # Row 7: progress bar (shown only while transcribing a file)
+        # Row 8: progress bar (shown only while transcribing a file)
         self.progress = ttk.Progressbar(frm, mode="determinate", maximum=100)
 
-        # Row 8: status line
+        # Row 9: status line
         self.status_var = tk.StringVar(value="Ready.")
         ttk.Label(frm, textvariable=self.status_var, foreground="#333").grid(
-            row=8, column=0, columnspan=3, sticky="w", padx=8, pady=(2, 0))
+            row=9, column=0, columnspan=3, sticky="w", padx=8, pady=(2, 0))
+
+    def _load_words(self):
+        """Read the saved "Words to expect" list, or return '' if there is none."""
+        try:
+            with open(self.words_path, encoding="utf-8") as f:
+                return f.read().strip()
+        except OSError:
+            return ""
+
+    def _save_words(self, words):
+        """Remember the "Words to expect" list for next time. Failing to save
+        (e.g. the app is in a read-only folder) is harmless, so it's ignored."""
+        try:
+            with open(self.words_path, "w", encoding="utf-8") as f:
+                f.write(words)
+        except OSError:
+            pass
+
+    def _hotwords(self):
+        """The "Words to expect" text tidied into a single comma-separated
+        line for Whisper, or None if the box is empty.
+
+        faster-whisper's `hotwords` option puts these words in front of every
+        30-second window Whisper processes, which nudges it towards those
+        spellings throughout the whole recording. See also _glossary().
+        """
+        parts = [w.strip() for w in self.words_var.get().replace("\n", ",").split(",")]
+        words = ", ".join(w for w in parts if w)
+        return words or None
+
+    def _glossary(self):
+        """The same words as a short sentence, 'Glossary: A, B, C.', for
+        Whisper's `initial_prompt`, or '' if there are none.
+
+        Testing showed that hotwords alone fix the spelling of names but make
+        Whisper leave out full stops, because the hint doesn't look like a
+        sentence. Also giving it this properly punctuated line keeps the
+        punctuation while still spelling the names correctly.
+        """
+        return f"Glossary: {self.session_hotwords}." if self.session_hotwords else ""
 
     def _update_model_note(self):
         """Show the hint for the currently selected model."""
@@ -764,20 +824,20 @@ class App:
         if pct is None:
             self.progress.grid_remove()
         else:
-            self.progress.grid(row=7, column=0, columnspan=3, sticky="ew", padx=8, pady=2)
+            self.progress.grid(row=8, column=0, columnspan=3, sticky="ew", padx=8, pady=2)
             self.progress["value"] = pct
 
     # ==================== speech model ==================== #
 
     def _get_model(self):
-        """Return the Whisper model chosen in the Accuracy drop-down, loading
-        it if needed. Called from worker threads.
+        """Return the Whisper model chosen in the Accuracy drop-down when Start
+        was pressed, loading it if needed. Called from worker threads.
 
         The first time a model is used it is downloaded from the internet
         (Hugging Face) into the "models" folder beside the app; afterwards it
         loads from disk and no internet is needed.
         """
-        name = self.model_var.get()
+        name = self.session_model
         with self.model_lock:
             if self.model is not None and self.model_name == name:
                 return self.model   # already loaded
@@ -800,7 +860,7 @@ class App:
     def _language(self):
         """English-only models get language='en'. Multilingual models get
         None, which tells Whisper to detect the language itself."""
-        return "en" if self.model_var.get().endswith(".en") else None
+        return "en" if self.session_model.endswith(".en") else None
 
     # ==================== Start / Stop ==================== #
 
@@ -840,6 +900,16 @@ class App:
                 return
             target = self._live_worker
             args = (self.devices[i], out)
+
+        # --- Copy the settings for this session ---
+        # Worker threads must not read Tkinter widgets or variables (only the
+        # GUI thread may), so everything they need is copied here, on the GUI
+        # thread, into plain attributes. This also means changing a setting
+        # mid-session has no effect until the next Start.
+        self.session_model = self.model_var.get()
+        self.session_timestamps = self.ts_var.get()
+        self.session_hotwords = self._hotwords()
+        self._save_words(self.words_var.get().strip())
 
         # --- Reset the window for a new session ---
         self.text.configure(state="normal")
@@ -925,7 +995,7 @@ class App:
         wait in seg_q and the status line shows how many are waiting.
         """
         model = self._get_model()
-        self.writer = DocWriter(out_path, "Transcript", self.ts_var.get())
+        self.writer = DocWriter(out_path, "Transcript", self.session_timestamps)
 
         audio_q = queue.Queue()   # raw audio from the sound card
         seg_q = queue.Queue()     # utterances waiting to be transcribed
@@ -937,8 +1007,9 @@ class App:
         def transcriber():
             """Second background thread: turns queued utterances into text."""
             # The last ~200 characters of transcript are given to Whisper as a
-            # "prompt" for context, which helps with spelling of names and
-            # with consistent punctuation across utterances.
+            # "prompt" for context (after the glossary of expected words),
+            # which helps keep spelling and punctuation consistent across
+            # utterances.
             prev_tail = ""
             while True:
                 item = seg_q.get()
@@ -954,10 +1025,13 @@ class App:
                 # vad_filter=False: our Segmenter already removed silence.
                 # condition_on_previous_text=False: each utterance is treated
                 #   independently, which prevents repeated-text glitches.
+                # hotwords / initial_prompt: the user's "Words to expect", so
+                #   names are spelled right (see _hotwords and _glossary).
                 segments, _ = model.transcribe(
                     audio, language=self._language(), beam_size=5,
                     vad_filter=False, condition_on_previous_text=False,
-                    initial_prompt=prev_tail or None)
+                    initial_prompt=(self._glossary() + " " + prev_tail).strip() or None,
+                    hotwords=self.session_hotwords)
 
                 parts = []
                 for s in segments:
@@ -1014,15 +1088,19 @@ class App:
         """
         model = self._get_model()
         self.writer = DocWriter(out_path, "Transcript: " + os.path.basename(path),
-                                self.ts_var.get())
+                                self.session_timestamps)
         self.post(self._status, f"Transcribing {os.path.basename(path)}…")
         self.post(self._set_progress, 0)
 
         # vad_filter=True: skip long silent stretches in the file (faster, and
         # avoids Whisper inventing words in silence).
+        # hotwords / initial_prompt: the user's "Words to expect", so names
+        #   are spelled right (see _hotwords and _glossary for why both).
         segments, info = model.transcribe(
             path, language=self._language(), beam_size=5, vad_filter=True,
-            vad_parameters={"min_silence_duration_ms": 500})
+            vad_parameters={"min_silence_duration_ms": 500},
+            hotwords=self.session_hotwords,
+            initial_prompt=self._glossary() or None)
         duration = max(info.duration, 0.001)   # avoid dividing by zero
 
         # `segments` is a generator: the actual transcription happens as we

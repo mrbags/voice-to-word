@@ -2,6 +2,10 @@
 
 Listens to a computer voice — text-to-speech, a screen reader, narration in a video — and types what it says into a Word document. Runs fully offline after a one-time model download.
 
+![Voice-to-Word transcribing a page read aloud by Microsoft Edge](docs/screenshot.png)
+
+*Transcribing an art-museum page read aloud by Microsoft Edge. This screenshot was taken before the "Words to expect" box was added: notice the misspelled names, which that box fixes.*
+
 ## Three ways to listen
 - **This computer's audio** – captures whatever is playing through your speakers or headphones. No cables, drivers or "Stereo Mix" needed. (The voice is captured even if your volume is low, but not if the app playing it is muted.)
 - **Microphone** – for a voice playing on another device in the room.
@@ -18,12 +22,17 @@ The first time you press Start, the app downloads the speech model you picked (a
 ## Using it
 1. Pick the source and device (your usual speakers are pre-selected).
 2. Pick an accuracy level. *small.en* is the best balance on most PCs; use *base.en* on older laptops if text falls behind the voice.
-3. Choose where to save, then press **Start listening** and play the voice.
-4. Press **Stop** when done, then **Open document**.
+3. Choose where to save.
+4. Optional: in **Words to expect**, list any names or unusual terms, separated by commas (see below).
+5. Press **Start listening** and play the voice.
+6. Press **Stop** when done, then **Open document**.
 
 Text appears live in the window and the .docx is saved after every sentence, so nothing is lost if the PC shuts down. A pause of more than 2 seconds starts a new paragraph. Tick *Add timestamps* to prefix each paragraph with the time it started.
 
 If the document is open in Word while the app is writing, Word locks the file — the app warns you and catches up once you close it.
+
+## Getting names right: "Words to expect"
+Whisper spells words it doesn't know the way they sound, so names come out as "Kehind Wiley" or "Jacob Jordines". Type the names you expect into **Words to expect**, for example `Kehinde Wiley, Nasher, Jacob Jordaens`, and Whisper will use those spellings. The list is remembered for next time in a `words.txt` file beside the app. Clear the box when you move on to a different subject.
 
 ## Tips
 - Computer voices are very clean, so even *base.en* is usually near-perfect. Use *large-v3* for non-English voices.
